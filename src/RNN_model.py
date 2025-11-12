@@ -17,7 +17,6 @@ Want a many to many RNN. Each input corresponds to output at every timestep
 seq_len: how many timesteps the model sees contiguously before producing a block of outputs (your memory horizon for training).
 batch: how many independent sequences you train on in parallel in one optimizer step. the batch just parallelizes many runs.
 
-Truncated BPTT: 
 
 """
 
@@ -45,7 +44,7 @@ class RNN(nn.Module):
     def forward_sequence(self, X, h0 = None):
         # X: (batch, seq_len, input_size)
 
-        h = torch.zeros(X.size(0), self.U.in_features) if h0 is None else h0
+        #h = torch.zeros(X.size(0), self.U.in_features) if h0 is None else h0
         
         outputs = []
 
@@ -60,38 +59,38 @@ class RNN(nn.Module):
 
 def main():
 
-    features = ["Gyrox","Gyroy","Gyroz"]
+    features = ["Gyrox"] #,"Gyroy","Gyroz"]
     output = ["velocity"]
 
     #Use to try system
-    Feature_data = np.random.rand(100),np.random.rand(100),np.random.rand(100)
-    output_data = np.random.rand(100)
+    feature_data = torch.randn(50,1)
+    output_data = torch.randn(50,1)
+
+    T = len(feature_data)
 
     #Define RNN
-    model = RNN(RNN(input_size = len(features), hidden_size = 10, output_size = len(output)))
+    #model = RNN(RNN(input_size = len(features), hidden_size = 1, output_size = 1))
 
-    #Define Training hyperparams
-    seq_len = 10
-    batch_size = 10
-    T = len(output_data)
+    seq_len = 5
+    batch_size =  int(T/seq_len)
 
-    X = [batch_size, Feature_data, seq_len]
-    Y = [batch_size, output_data, seq_len]
+    """Create sliding windows"""
+    X_windows = torch.stack([feature_data[i:i+seq_len] for i in range(T - seq_len + 1)], dim=0)   # (N, 5, 1)
+    Y_windows = torch.stack([output_data[i:i+seq_len] for i in range(T-seq_len+1)], dim = 0)
 
-    store_loss = []
+    print(X_windows)
 
-    for t in range(0,T,seq_len):
+    """Create one batch"""
+    #Take 10 different windows
+    X_batch = X_windows[:batch_size]
+    Y_batch = Y_windows[:batch_size]
 
-        X_seq = X[: , t:t+seq_len , :]
-        Y_seq = Y[: , t:t+seq_len , :]
+    print(X_batch)
 
-        Y_pred, h = model.forward_sequence(X_seq, h)
 
-        loss = torch.MSELoss(Y_pred, Y_seq)
 
-        store_loss.append(loss)
-    
-    print(store_loss)
+
+
 
 
 main()
