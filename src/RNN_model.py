@@ -3,7 +3,7 @@ import pandas as pd
 import torch
 import torch.nn as nn
 from torch.utils.data import TensorDataset, DataLoader
-
+from torch.utils.data import random_split
 import matplotlib.pyplot as plt
 """
 ---------  Structure --------
@@ -64,14 +64,12 @@ class RNN(nn.Module):
         
         return Y
         
-
-
     
 
 def main():
 
-
     """Structure Data"""
+    #TODO Normalize data ? 
     IMU = pd.read_csv("Data/IMU_data/data.csv")
     groundtruth = pd.read_csv("Data/state_groundtruth_data/data.csv")
 
@@ -81,7 +79,7 @@ def main():
 
     IMU['t'] = (IMU['#timestamp [ns]'] - IMU['#timestamp [ns]'].iloc[0]) * 1e-9
     groundtruth['t'] = (groundtruth['#timestamp'] - groundtruth['#timestamp'].iloc[0]) * 1e-9
-    IMU = IMU.iloc[:len(groundtruth)]
+    IMU = IMU.iloc[:len(groundtruth)] #Ensure same length
 
     #Write to tensors
     IMU.drop(columns=['#timestamp [ns]','t'], inplace=True)
@@ -90,20 +88,22 @@ def main():
     groundtruth_x_vel = groundtruth[[' v_RS_R_x [m s^-1]']]
     Y_np = groundtruth_x_vel.to_numpy()
 
-    X = torch.from_numpy(X_np).float()
+    X = torch.from_numpy(X_np).float() 
     Y = torch.from_numpy(Y_np).float()
 
 
     """Random data for test"""
 
-    epochs = 1
-    batch_size =  1000
-    seq_len = 10
+    epochs = 200
+    batch_size =  150
+    seq_len = 20
+    test_ratio = 0.2
+    val_ratio = 0.2
 
     T = len(X)
     num_windows = T-seq_len+1
     nr_of_features = X.shape[1]
-    nr_of_hidden_neurons = 10
+    nr_of_hidden_neurons = 5
     nr_of_outputs = Y.shape[1]
 
     """Define RNN, Loss function and optimizer"""
@@ -111,20 +111,45 @@ def main():
     criterion = nn.MSELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
-    """Create sliding windows"""
+    """Create sliding windows -> Dataset"""
     X_windows = torch.stack([X[i:i+seq_len] for i in range(num_windows)], dim = 0)   #X_windows.shape = (num_windows, seq_len, features)
     Y_windows = torch.stack([Y[i:i+seq_len] for i in range(num_windows)], dim = 0)
 
-
     dataset = TensorDataset(X_windows, Y_windows) # dataset[i] = (X_windows[i], Y_windows[i])
+    data_size = len(dataset) # nr of windows
+    """Create train and HOLDOUT test dataset"""
+    n_test = int(test_ratio * data_size)
+    n_train = data_size-n_test
+
+    train, test = random_split(dataset,[n_train,n_test]) #Do not touch the test set
 
     """Training"""
-    store_mse_loss = []
-    for epoch in range(epochs):
-        
-        loader = DataLoader(dataset, batch_size=batch_size, shuffle=True) #TODO: Look at droplast()? loader is an iterable of batches
 
-        for batch_idx, (X_batch,Y_batch) in enumerate(loader):
+    """Create test and validation dataset"""
+    n_validation = int(val_ratio * len(train))
+    n_train_dataset = len(train)-n_validation
+
+    train_dataset, validation_dataset = random_split(train,[n_train_dataset,n_validation])
+
+    training_loss = []
+    validation_loss = []
+
+    print(len(validation_dataset))
+
+
+    for epoch in range(epochs):
+
+        print(f"----STARTING EPOCH: {epoch} ----")
+
+        model.train() #training mode
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True) #TODO: Look at droplast()? loader is an iterable of batches
+        val_loader = DataLoader(validation_dataset, batch_size=batch_size, shuffle=False)
+
+        epoch_train_loss = 0
+        epoch_validation_loss = 0
+
+        #------TRAINING-----
+        for X_batch,Y_batch in train_loader:
 
             #X_batch: (batch_size, seq_len, 1)
             #before computing new gradients for the current batch, you must clear the old ones:
@@ -141,29 +166,37 @@ def main():
             loss = criterion(Y_pred, Y_batch) #Many-many loss over the entire batch
 
             loss.backward() # BPTT computes ∂L/∂W, ∂L/∂U, ∂L/∂V, etc
-            optimizer.step() # one call to optimizer.step() = one weight update using the current batch’s gradients.
+            optimizer.step() # one call to optimizer.step() = one weight update using the current batch’s gradients
 
-            store_mse_loss.append(loss.item())
-    
-    plt.plot(store_mse_loss)
-    plt.xlabel("Batch")
-    plt.ylabel("MSE")
-    plt.title("MSE loss over batches")
-    plt.show()
+            epoch_train_loss += loss.item()
+
+        #------Validation-----
+        model.eval()
+        with torch.no_grad():
+            for X_batch, Y_batch in val_loader:
+
+                Y_pred = model.forward_sequence(X_batch)
+                loss = criterion(Y_pred, Y_batch)
+                epoch_validation_loss += loss.item()
         
+        training_loss.append(epoch_train_loss / len(train_loader))
+        validation_loss.append(epoch_validation_loss / len(val_loader))
+
+    plt.figure()
+    plt.plot(training_loss, label = 'Training loss', color = 'blue')
+    plt.plot(validation_loss, label = 'validation loss', color = 'red')
+    
+    plt.xlabel('Epoch')
+    plt.ylabel('MSE loss')
+    plt.legend()
+    plt.grid(True)
+
+    plt.show()
+    
+
 main()
 
 
-"""
-model predicts:
-Y_pred with shape (batch, seq_len, 1)
-labels are:
-Y_batch with shape (batch, seq_len, 1)
-
-nn.MSELoss(): 
--> the loss includes all timesteps in all sequences of the batch.
-
-"""
 
 
 
