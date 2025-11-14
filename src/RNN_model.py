@@ -45,7 +45,6 @@ class RNN(nn.Module):
     seq2 = [[x1_0],[x1_1],[x1_2],[x1_3],[x1_4]],
     seq3 = [[x3_0],[x3_1],[x3_2],[x3_3],[x3_4]],
     ]
-    
     """
     def forward_sequence(self, X):
         # X: (batch, seq_len, input_size)
@@ -62,9 +61,24 @@ class RNN(nn.Module):
 
         
         return Y
+        
+
+
     
 
 def main():
+
+
+    """Structure Data"""
+    IMU = pd.read_csv("../Data/IMU_data/data.csv")
+    groundtruth = pd.read_csv("../Data/state_groundtruth_data/data.csv")
+    IMU.drop(index = 0, inplace = True) #Because of different timestamps
+
+    IMU['t'] = (IMU['#timestamp [ns]'] - IMU['#timestamp [ns]'].iloc[0]) * 1e-9
+    groundtruth['t'] = (groundtruth['#timestamp'] - groundtruth['#timestamp'].iloc[0]) * 1e-9
+
+
+
 
     features = ["Gyrox"]
     output = ["velocity"]
@@ -109,13 +123,12 @@ def main():
             """
             Y_pred = model.forward_sequence(X_batch)
 
-            loss = criterion(Y_pred, Y_batch)
+            loss = criterion(Y_pred, Y_batch) #Many-many loss over the entire batch
 
-            loss.backward() #BBTT
-            optimizer.step()
+            loss.backward() #BPTT computes ∂L/∂W, ∂L/∂U, ∂L/∂V, etc
+            optimizer.step() # one call to optimizer.step() = one weight update using the current batch’s gradients.
 
-            print(loss)
-
+        
 main()
 
 
