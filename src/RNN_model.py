@@ -3,6 +3,8 @@ import pandas as pd
 import torch
 import torch.nn as nn
 from torch.utils.data import TensorDataset, DataLoader
+
+import matplotlib.pyplot as plt
 """
 ---------  Structure --------
 Want a many to many RNN. Each input corresponds to output at every timestep
@@ -70,41 +72,54 @@ def main():
 
 
     """Structure Data"""
-    IMU = pd.read_csv("../Data/IMU_data/data.csv")
-    groundtruth = pd.read_csv("../Data/state_groundtruth_data/data.csv")
+    IMU = pd.read_csv("Data/IMU_data/data.csv")
+    groundtruth = pd.read_csv("Data/state_groundtruth_data/data.csv")
+
     IMU.drop(index = 0, inplace = True) #Because of different timestamps
+
+    #Adjust such that timestamp start at 0 and so that time-spaces are even in Input and output
 
     IMU['t'] = (IMU['#timestamp [ns]'] - IMU['#timestamp [ns]'].iloc[0]) * 1e-9
     groundtruth['t'] = (groundtruth['#timestamp'] - groundtruth['#timestamp'].iloc[0]) * 1e-9
+    IMU = IMU.iloc[:len(groundtruth)]
 
+    #Write to tensors
+    IMU.drop(columns=['#timestamp [ns]','t'], inplace=True)
+    X_np = IMU.to_numpy()
 
+    groundtruth_x_vel = groundtruth[[' v_RS_R_x [m s^-1]']]
+    Y_np = groundtruth_x_vel.to_numpy()
 
+    X = torch.from_numpy(X_np).float()
+    Y = torch.from_numpy(Y_np).float()
 
-    features = ["Gyrox"]
-    output = ["velocity"]
 
     """Random data for test"""
-    feature_data = torch.randn(100,1)
-    output_data = torch.randn(100,1)
 
-    epochs = 10
-    batch_size =  96
-    seq_len = 5
-    T = len(feature_data)
+    epochs = 1
+    batch_size =  1000
+    seq_len = 10
+
+    T = len(X)
     num_windows = T-seq_len+1
+    nr_of_features = X.shape[1]
+    nr_of_hidden_neurons = 10
+    nr_of_outputs = Y.shape[1]
 
     """Define RNN, Loss function and optimizer"""
-    model = RNN(input_size = len(features), hidden_size = 10, output_size = 1)
+    model = RNN(input_size = nr_of_features, hidden_size = nr_of_hidden_neurons, output_size = nr_of_outputs)
     criterion = nn.MSELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
     """Create sliding windows"""
-    X_windows = torch.stack([feature_data[i:i+seq_len] for i in range(num_windows)], dim=0)   #X_windows.shape = (num_windows, seq_len, 1)
-    Y_windows = torch.stack([output_data[i:i+seq_len] for i in range(num_windows)], dim = 0)
+    X_windows = torch.stack([X[i:i+seq_len] for i in range(num_windows)], dim = 0)   #X_windows.shape = (num_windows, seq_len, features)
+    Y_windows = torch.stack([Y[i:i+seq_len] for i in range(num_windows)], dim = 0)
+
 
     dataset = TensorDataset(X_windows, Y_windows) # dataset[i] = (X_windows[i], Y_windows[i])
 
     """Training"""
+    store_mse_loss = []
     for epoch in range(epochs):
         
         loader = DataLoader(dataset, batch_size=batch_size, shuffle=True) #TODO: Look at droplast()? loader is an iterable of batches
@@ -114,20 +129,27 @@ def main():
             #X_batch: (batch_size, seq_len, 1)
             #before computing new gradients for the current batch, you must clear the old ones:
             optimizer.zero_grad()
-            """
-            [
-            [[x7_0],[x7_1],[x7_2],[x7_3],[x7_4]],
-            [[x1_0],[x1_1],[x1_2],[x1_3],[x1_4]],
-            [[x3_0],[x3_1],[x3_2],[x3_3],[x3_4]],
-            ]
-            """
+            
+            #[
+            #[[x7_0],[x7_1],[x7_2],[x7_3],[x7_4]],
+            #[[x1_0],[x1_1],[x1_2],[x1_3],[x1_4]],
+            #[[x3_0],[x3_1],[x3_2],[x3_3],[x3_4]],
+            #]
+           
             Y_pred = model.forward_sequence(X_batch)
 
             loss = criterion(Y_pred, Y_batch) #Many-many loss over the entire batch
 
-            loss.backward() #BPTT computes ∂L/∂W, ∂L/∂U, ∂L/∂V, etc
+            loss.backward() # BPTT computes ∂L/∂W, ∂L/∂U, ∂L/∂V, etc
             optimizer.step() # one call to optimizer.step() = one weight update using the current batch’s gradients.
 
+            store_mse_loss.append(loss.item())
+    
+    plt.plot(store_mse_loss)
+    plt.xlabel("Batch")
+    plt.ylabel("MSE")
+    plt.title("MSE loss over batches")
+    plt.show()
         
 main()
 
