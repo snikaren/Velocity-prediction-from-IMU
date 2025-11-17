@@ -78,8 +78,8 @@ def main():
 
     """Structure Data"""
     #TODO Normalize data ? 
-    IMU = pd.read_csv("Data/IMU_data/data.csv")
-    groundtruth = pd.read_csv("Data/state_groundtruth_data/data.csv")
+    IMU = pd.read_csv(r"C:\Users\hampu\Desktop\RNN_test\Velocity-prediction-from-IMU\Data\IMU_data\data.csv")
+    groundtruth = pd.read_csv(r"C:\Users\hampu\Desktop\RNN_test\Velocity-prediction-from-IMU\Data\state_groundtruth_data\data.csv")
 
     IMU.drop(index = 0, inplace = True) #Because of different timestamps
 
@@ -99,10 +99,10 @@ def main():
     X = torch.from_numpy(X_np).float() 
     Y = torch.from_numpy(Y_np).float()
 
-    epochs = 10
+    epochs = 100
     batch_size =  150
     seq_len = 20
-    pred_len = 3
+    pred_len = 5
     test_ratio = 0.2
     val_ratio = 0.2
 
@@ -165,15 +165,17 @@ def main():
             #before computing new gradients for the current batch, you must clear the old ones:
             optimizer.zero_grad()
             
+            #e.g)
             #[
             #[[x7_0],[x7_1],[x7_2],[x7_3],[x7_4]],
             #[[x1_0],[x1_1],[x1_2],[x1_3],[x1_4]],
             #[[x3_0],[x3_1],[x3_2],[x3_3],[x3_4]],
             #]
-           
-            Y_pred = model.forward_sequence(X_batch,pred_len)
 
-            loss = criterion(Y_pred, Y_batch) #Many-many loss over the entire batch
+           #Get y_pred for whole batch
+            Y_pred_batch = model.forward_sequence(X_batch,pred_len)
+
+            loss = criterion(Y_pred_batch, Y_batch) #Many-many loss over the entire batch
 
             loss.backward() # BPTT computes ∂L/∂W, ∂L/∂U, ∂L/∂V, etc
             optimizer.step() # one call to optimizer.step() = one weight update using the current batch’s gradients
