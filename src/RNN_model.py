@@ -48,19 +48,27 @@ class RNN(nn.Module):
     seq3 = [[x3_0],[x3_1],[x3_2],[x3_3],[x3_4]],
     ]
     """
-    def forward_sequence(self, X):
+    def forward_sequence(self, X, pred_len):
         # X: (batch, seq_len, input_size)
+
+        seq_len = X.size(1)
+        batch_size = X.size(0)
 
         h = torch.zeros(X.size(0), self.U.in_features)
         
-        outputs = []
+        predicted_outputs = []
     
-        for t in range(X.size(1)):
-            y, h = self.forward(X[:,t,:], h)
-            outputs.append(y)
-        
-        Y = torch.stack(outputs, dim = 1)
+        for t in range(seq_len):
+            _, h = self.forward(X[:,t,:], h)
 
+
+        x_future = torch.zeros(batch_size, self.input_size)  # device=X.device GPU thing.
+
+        for _ in range(pred_len):
+            y, h = self.forward(x_future, h)
+            predicted_outputs.append(y)
+        
+        Y = torch.stack(predicted_outputs, dim = 1)
         
         return Y
         
@@ -91,17 +99,14 @@ def main():
     X = torch.from_numpy(X_np).float() 
     Y = torch.from_numpy(Y_np).float()
 
-
-    """Random data for test"""
-
-    epochs = 200
+    epochs = 10
     batch_size =  150
     seq_len = 20
+    pred_len = 3
     test_ratio = 0.2
     val_ratio = 0.2
 
-    T = len(X)
-    num_windows = T-seq_len+1
+
     nr_of_features = X.shape[1]
     nr_of_hidden_neurons = 5
     nr_of_outputs = Y.shape[1]
@@ -111,19 +116,24 @@ def main():
     criterion = nn.MSELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
-    """Create sliding windows -> Dataset"""
-    X_windows = torch.stack([X[i:i+seq_len] for i in range(num_windows)], dim = 0)   #X_windows.shape = (num_windows, seq_len, features)
-    Y_windows = torch.stack([Y[i:i+seq_len] for i in range(num_windows)], dim = 0)
+    """Create sliding windows"""
+    tot_timesteps = len(X)
+    num_windows = tot_timesteps-seq_len-pred_len+1 
 
+    X_windows = torch.stack([X[i:i+seq_len] for i in range(num_windows)], dim = 0)   #X_windows.shape = (num_windows, seq_len, features)
+    Y_windows = torch.stack([Y[i+seq_len:i+seq_len+pred_len] for i in range(num_windows)], dim = 0)
+
+    """Create dataset from windows"""
     dataset = TensorDataset(X_windows, Y_windows) # dataset[i] = (X_windows[i], Y_windows[i])
     data_size = len(dataset) # nr of windows
+
     """Create train and HOLDOUT test dataset"""
     n_test = int(test_ratio * data_size)
     n_train = data_size-n_test
 
     train, test = random_split(dataset,[n_train,n_test]) #Do not touch the test set
 
-    """Training"""
+    """-----Training-----"""
 
     """Create test and validation dataset"""
     n_validation = int(val_ratio * len(train))
@@ -161,7 +171,7 @@ def main():
             #[[x3_0],[x3_1],[x3_2],[x3_3],[x3_4]],
             #]
            
-            Y_pred = model.forward_sequence(X_batch)
+            Y_pred = model.forward_sequence(X_batch,pred_len)
 
             loss = criterion(Y_pred, Y_batch) #Many-many loss over the entire batch
 
@@ -175,7 +185,7 @@ def main():
         with torch.no_grad():
             for X_batch, Y_batch in val_loader:
 
-                Y_pred = model.forward_sequence(X_batch)
+                Y_pred = model.forward_sequence(X_batch,pred_len)
                 loss = criterion(Y_pred, Y_batch)
                 epoch_validation_loss += loss.item()
         
