@@ -65,7 +65,7 @@ def Create_sliding_windows(X,Y, seq_len, pred_len):
     return X_windows, Y_windows
 
 
-def RNN_training(X_windows,Y_windows,nr_of_features,nr_of_outputs,model_choice,epochs,batch_size,seq_len,pred_len,learning_rate,nr_of_hidden_neurons):
+def RNN_training(train_dataset,validation_dataset,nr_of_features,nr_of_outputs,model_choice,epochs,batch_size,seq_len,pred_len,learning_rate,nr_of_hidden_neurons):
 
     """Define RNN, Loss function and optimizer"""
     if model_choice == "RNN":
@@ -81,29 +81,25 @@ def RNN_training(X_windows,Y_windows,nr_of_features,nr_of_outputs,model_choice,e
 
 
     """Create dataset from windows"""
-    dataset = TensorDataset(X_windows, Y_windows) # dataset[i] = (X_windows[i], Y_windows[i])
-    data_size = len(dataset) # nr of windows
+    #dataset = TensorDataset(X_windows, Y_windows) # dataset[i] = (X_windows[i], Y_windows[i])
+    #data_size = len(dataset) # nr of windows
 
     """Create train and HOLDOUT test dataset"""
-    n_test = int(test_ratio * data_size)
-    n_train = data_size-n_test
+    #n_test = int(test_ratio * data_size)
+    #_train = data_size-n_test
 
-    train, test = random_split(dataset,[n_train,n_test]) #Do not touch the test set
+    #train, test = random_split(dataset,[n_train,n_test]) #Do not touch the test set
 
     """-----Training-----"""
 
     """Create test and validation dataset"""
-    n_validation = int(val_ratio * len(train))
-    n_train_dataset = len(train)-n_validation
+    #n_validation = int(val_ratio * len(train))
+    #n_train_dataset = len(train)-n_validation
 
-    train_dataset, validation_dataset = random_split(train,[n_train_dataset,n_validation])
+    #train_dataset, validation_dataset = random_split(train,[n_train_dataset,n_validation])
 
     training_loss = []
     validation_loss = []
-
-    print(len(validation_dataset))
-
-
     for i in range(epochs):
 
         print(f"----STARTING EPOCH: {epochs} ----")
@@ -163,6 +159,20 @@ def RNN_training(X_windows,Y_windows,nr_of_features,nr_of_outputs,model_choice,e
     plt.show()
 
 
+#TODO: add this to training:
+"""df_metrics.loc[len(df_metrics)] = {
+            "model": model_choice,
+            "pred_len": pred_len,
+            "seq_len": seq_len,
+            "batch_size": batch_size,
+            "learning_rate": learning_rate,
+            "nr_of_hidden_neurons": nr_of_hidden_neurons,
+            "epoch": epoch + 1,
+            "training_error": train_error,
+            "validation_error": val_error,
+        }"""
+
+
 def RNN_main_pipeline():
 
     """Structure Data"""
@@ -170,40 +180,37 @@ def RNN_main_pipeline():
     IMU = pd.read_csv(r"C:\Users\hampu\Desktop\RNN_test\Velocity-prediction-from-IMU\Data\IMU_data\data.csv")
     groundtruth = pd.read_csv(r"C:\Users\hampu\Desktop\RNN_test\Velocity-prediction-from-IMU\Data\state_groundtruth_data\data.csv")
 
-    X, Y, nr_of_features, nr_of_outputs = data_handling(IMU,groundtruth)
-    dataset = TensorDataset(X, Y) # dataset[i] = (X[i], Y[i])
+    X_train, Y_train, X_test, Y_test, nr_of_features, nr_of_outputs = data_handling(IMU,groundtruth)
 
-    train, test = random_split(dataset,[n_train,n_test]) #Never touch test set in training
-
+    #Store results in csv_file
+    header = ["model", "pred_len", "seq_len", "batch_size", "learning_rate", "nr_of_hidden_neurons", "epoch", "training_error", "validation_error"]
 
     """Set up training for various cases"""
     for seq_len in seq_len_list:
         for pred_len in pred_len_list:
-            X_windows, Y_windows = Create_sliding_windows(X,Y, seq_len, pred_len)
+            X_windows, Y_windows = Create_sliding_windows(X_train,Y_train, seq_len, pred_len)
+            dataset = TensorDataset(X_windows, Y_windows) # dataset[i] = (X_windows[i], Y_windows[i])
+            data_size = len(dataset)
+            n_validation = int(val_ratio * data_size)
+            n_train = data_size-n_validation
+
+            train, validation = random_split(dataset,[n_train,n_validation]) #TODO: Is it fine that they are different splits?
 
             for model_choice in model_choice_list:
                 for epochs in epochs_list:
                     for batch_size in batch_size_list:
-                                for learning_rate in learning_rate_list:
-                                    for nr_of_hidden_neurons in nr_of_hidden_neurons_list:
-                                        RNN_training(X_windows,Y_windows,nr_of_features,nr_of_outputs,model_choice,epochs,batch_size,seq_len,pred_len,learning_rate,nr_of_hidden_neurons)
+                        for learning_rate in learning_rate_list:
+                            for nr_of_hidden_neurons in nr_of_hidden_neurons_list:
 
+                                df_metrics = pd.DataFrame(columns=header)
+                
+                                RNN_training(train,validation,nr_of_features,nr_of_outputs,model_choice,epochs,batch_size,seq_len,pred_len,learning_rate,nr_of_hidden_neurons,df_metrics)
+                                
+                                filename = (
+                                    f"{seq_len}seqlen_{pred_len}predlen_"
+                                    f"{model_choice}_{epochs}epochs_"
+                                    f"{batch_size}batchsize_{learning_rate}learning_rate_"
+                                    f"{nr_of_hidden_neurons}_hiddenneurons.csv"
+                                )
 
-
-"""Create dataset from windows"""
-    dataset = TensorDataset(X_windows, Y_windows) # dataset[i] = (X_windows[i], Y_windows[i])
-    data_size = len(dataset) # nr of windows
-
-    """Create train and HOLDOUT test dataset"""
-    n_test = int(test_ratio * data_size)
-    n_train = data_size-n_test
-
-    train, test = random_split(dataset,[n_train,n_test]) #Do not touch the test set
-
-    """-----Training-----"""
-
-    """Create test and validation dataset"""
-    n_validation = int(val_ratio * len(train))
-    n_train_dataset = len(train)-n_validation
-
-    train_dataset, validation_dataset = random_split(train,[n_train_dataset,n_validation])
+                                df_metrics.to_csv(filename, index=False)
