@@ -21,20 +21,38 @@ def data_handling(IMU,groundtruth):
     groundtruth['t'] = (groundtruth['#timestamp'] - groundtruth['#timestamp'].iloc[0]) * 1e-9
     IMU = IMU.iloc[:len(groundtruth)] #Ensure same length
 
-    #Write to tensors
     IMU.drop(columns=['#timestamp [ns]','t'], inplace=True)
-    X_np = IMU.to_numpy()
 
-    groundtruth_x_vel = groundtruth[[' v_RS_R_x [m s^-1]']]
-    Y_np = groundtruth_x_vel.to_numpy()
+    #Split into train and test set
+    tot_timesteps = IMU.shape[0]
+    train_size = int((1-test_ratio) * tot_timesteps)
 
-    X = torch.from_numpy(X_np).float() 
-    Y = torch.from_numpy(Y_np).float()
+    train_IMU = IMU[0:train_size]
+    test_IMU = IMU[train_size:]
 
-    nr_of_features = X.shape[1]
-    nr_of_outputs = Y.shape[1]
+    train_groundtruth = groundtruth[0:train_size]
+    test_groundtruth = groundtruth[train_size:]
 
-    return X, Y, nr_of_features, nr_of_outputs 
+    #Write to tensors
+    X_np_train = train_IMU.to_numpy()
+    X_np_test = test_IMU.to_numpy()
+
+    X_train = torch.from_numpy(X_np_train).float() 
+    X_test = torch.from_numpy(X_np_test).float()
+
+    groundtruth_x_vel_train = train_groundtruth[[' v_RS_R_x [m s^-1]']]
+    groundtruth_x_vel_test = test_groundtruth[[' v_RS_R_x [m s^-1]']]
+
+    Y_np_train = groundtruth_x_vel_train.to_numpy()
+    Y_np_test = groundtruth_x_vel_test.to_numpy()
+
+    Y_train = torch.from_numpy(Y_np_train).float()
+    Y_test = torch.from_numpy(Y_np_test).float()
+
+    nr_of_features = X_train.shape[1]
+    nr_of_outputs = Y_train.shape[1]
+
+    return X_train, Y_train, X_test, Y_test, nr_of_features, nr_of_outputs
 
 
 def Create_sliding_windows(X,Y, seq_len, pred_len):
@@ -153,17 +171,22 @@ def RNN_main_pipeline():
     groundtruth = pd.read_csv(r"C:\Users\hampu\Desktop\RNN_test\Velocity-prediction-from-IMU\Data\state_groundtruth_data\data.csv")
 
     X, Y, nr_of_features, nr_of_outputs = data_handling(IMU,groundtruth)
+    dataset = TensorDataset(X, Y) # dataset[i] = (X[i], Y[i])
 
-    """Set up training"""
-    for model_choice in model_choice_list:
-        for epochs in epochs_list:
-            for batch_size in batch_size_list:
-                for seq_len in seq_len_list:
-                    for pred_len in pred_len_list:
-                        X_windows, Y_windows = Create_sliding_windows(X,Y, seq_len, pred_len)
-                        for learning_rate in learning_rate_list:
-                            for nr_of_hidden_neurons in nr_of_hidden_neurons_list:
-                                RNN_training(X_windows,Y_windows,nr_of_features,nr_of_outputs,model_choice,epochs,batch_size,seq_len,pred_len,learning_rate,nr_of_hidden_neurons)
+    train, test = random_split(dataset,[n_train,n_test]) #Never touch test set in training
+
+
+    """Set up training for various cases"""
+    for seq_len in seq_len_list:
+        for pred_len in pred_len_list:
+            X_windows, Y_windows = Create_sliding_windows(X,Y, seq_len, pred_len)
+
+            for model_choice in model_choice_list:
+                for epochs in epochs_list:
+                    for batch_size in batch_size_list:
+                                for learning_rate in learning_rate_list:
+                                    for nr_of_hidden_neurons in nr_of_hidden_neurons_list:
+                                        RNN_training(X_windows,Y_windows,nr_of_features,nr_of_outputs,model_choice,epochs,batch_size,seq_len,pred_len,learning_rate,nr_of_hidden_neurons)
 
 
 
