@@ -5,6 +5,7 @@ import torch.nn as nn
 from torch.utils.data import TensorDataset, DataLoader
 from torch.utils.data import random_split
 import matplotlib.pyplot as plt
+import copy
 
 """From other files"""
 from RNN_model import RNN,GRURNN
@@ -65,7 +66,7 @@ def Create_sliding_windows(X,Y, seq_len, pred_len):
     return X_windows, Y_windows
 
 
-def RNN_training(train_dataset,validation_dataset,nr_of_features,nr_of_outputs,model_choice,epochs,batch_size,seq_len,pred_len,learning_rate,nr_of_hidden_neurons):
+def RNN_training(train,validation,nr_of_features,nr_of_outputs,model_choice,max_epochs,batch_size,seq_len,pred_len,learning_rate,nr_of_hidden_neurons,patience):
 
     """Define RNN, Loss function and optimizer"""
     if model_choice == "RNN":
@@ -78,38 +79,24 @@ def RNN_training(train_dataset,validation_dataset,nr_of_features,nr_of_outputs,m
     
     criterion = nn.MSELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    train_loader = DataLoader(train, batch_size=batch_size, shuffle=True) #TODO: Look at droplast()? loader is an iterable of batches
+    val_loader = DataLoader(validation, batch_size=batch_size, shuffle=False)
 
+    # Early stopping vars
+    best_val_loss = np.inf
+    best_model = None
+    no_improvement_count = 0
+    nr_of_epochs = max_epochs
 
-    """Create dataset from windows"""
-    #dataset = TensorDataset(X_windows, Y_windows) # dataset[i] = (X_windows[i], Y_windows[i])
-    #data_size = len(dataset) # nr of windows
-
-    """Create train and HOLDOUT test dataset"""
-    #n_test = int(test_ratio * data_size)
-    #_train = data_size-n_test
-
-    #train, test = random_split(dataset,[n_train,n_test]) #Do not touch the test set
-
-    """-----Training-----"""
-
-    """Create test and validation dataset"""
-    #n_validation = int(val_ratio * len(train))
-    #n_train_dataset = len(train)-n_validation
-
-    #train_dataset, validation_dataset = random_split(train,[n_train_dataset,n_validation])
 
     training_loss = []
     validation_loss = []
-    for i in range(epochs):
+    for epoch in range(max_epochs):
 
-        print(f"----STARTING EPOCH: {epochs} ----")
-
+        print(f"----STARTING EPOCH: {epoch+1} ----")
         model.train() #training mode
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True) #TODO: Look at droplast()? loader is an iterable of batches
-        val_loader = DataLoader(validation_dataset, batch_size=batch_size, shuffle=False)
 
         epoch_train_loss = 0
-        epoch_validation_loss = 0
 
         #------TRAINING-----
         for X_batch,Y_batch in train_loader:
@@ -125,55 +112,101 @@ def RNN_training(train_dataset,validation_dataset,nr_of_features,nr_of_outputs,m
             #[[x3_0],[x3_1],[x3_2],[x3_3],[x3_4]],
             #]
 
-           #Get y_pred for whole batch
+            #Get y_pred for whole batch
             Y_pred_batch = model.forward_sequence(X_batch,pred_len)
 
-            loss = criterion(Y_pred_batch, Y_batch) #Many-many loss over the entire batch
+            loss = criterion(Y_pred_batch, Y_batch)
 
             loss.backward() # BPTT computes ∂L/∂W, ∂L/∂U, ∂L/∂V, etc
             optimizer.step() # one call to optimizer.step() = one weight update using the current batch’s gradients
 
             epoch_train_loss += loss.item()
 
+        epoch_train_loss /= len(train_loader)
+
         #------Validation-----
         model.eval()
+        epoch_val_loss  = 0
+
         with torch.no_grad():
             for X_batch, Y_batch in val_loader:
 
                 Y_pred = model.forward_sequence(X_batch,pred_len)
                 loss = criterion(Y_pred, Y_batch)
-                epoch_validation_loss += loss.item()
+                epoch_val_loss  += loss.item()
+
+        epoch_val_loss  /= len(val_loader)
+
         
-        training_loss.append(epoch_train_loss / len(train_loader))
-        validation_loss.append(epoch_validation_loss / len(val_loader))
+        training_loss.append(epoch_train_loss)
+        validation_loss.append(epoch_val_loss )
 
-    plt.figure()
-    plt.plot(training_loss, label = 'Training loss', color = 'blue')
-    plt.plot(validation_loss, label = 'validation loss', color = 'red')
-    
-    plt.xlabel('Epoch')
-    plt.ylabel('MSE loss')
-    plt.legend()
-    plt.grid(True)
+        print(f"Epoch {epoch+1}: train_loss={epoch_train_loss:.4f}, "
+              f"val_loss={epoch_val_loss :.4f}")
+        
+        #-------- Early stopping check --------
+        if epoch_val_loss  < best_val_loss - 1e-6:
+            best_val_loss = epoch_val_loss 
+            best_model = copy.deepcopy(model.state_dict())
+            no_improvement_count = 0
+        else:
+            no_improvement_count += 1
+            if no_improvement_count >= patience:
+                print(f"Early stopping at {epoch+1}")
+                nr_of_epochs = epoch+1
+                break
 
-    plt.show()
+    if best_model is not None:
+        model.load_state_dict(best_model)
 
-
-#TODO: add this to training:
-"""df_metrics.loc[len(df_metrics)] = {
-            "model": model_choice,
-            "pred_len": pred_len,
-            "seq_len": seq_len,
-            "batch_size": batch_size,
-            "learning_rate": learning_rate,
-            "nr_of_hidden_neurons": nr_of_hidden_neurons,
-            "epoch": epoch + 1,
-            "training_error": train_error,
-            "validation_error": val_error,
-        }"""
+    return model, training_loss, validation_loss, nr_of_epochs
 
 
-def RNN_main_pipeline():
+def RNN_main_pipeline(X_train, Y_train, nr_of_features, nr_of_outputs):
+
+    """Structure Data"""
+    #TODO Normalize data ? 
+    IMU = pd.read_csv(r"C:\Users\hampu\Desktop\RNN_test\Velocity-prediction-from-IMU\Data\IMU_data\data.csv")
+    groundtruth = pd.read_csv(r"C:\Users\hampu\Desktop\RNN_test\Velocity-prediction-from-IMU\Data\state_groundtruth_data\data.csv")
+
+
+    #Store results in csv_file
+    header = ["model", "pred_len", "seq_len", "batch_size", "learning_rate", "hidden", "nr_of_epochs", "training_error", "validation_error"]
+    df_metrics = pd.DataFrame(columns=header)
+
+    """Set up training"""
+    for model_choice in model_choice_list:
+            for batch_size in batch_size_list:
+                    for learning_rate in learning_rate_list:
+                        for nr_of_hidden_neurons in nr_of_hidden_neurons_list:
+                            for seq_len in seq_len_list:
+                                for pred_len in pred_len_list:
+                                    
+                                    X_windows, Y_windows = Create_sliding_windows(X_train,Y_train, seq_len, pred_len)
+                                    dataset = TensorDataset(X_windows, Y_windows) # dataset[i] = (X_windows[i], Y_windows[i])
+                                    data_size = len(dataset)
+                                    n_validation = int(val_ratio * data_size)
+                                    n_train = data_size-n_validation
+                                    train, validation = random_split(dataset,[n_train,n_validation]) #TODO: Is it fine that they are different splits?
+
+                                    #Train model and log data
+                                    model, training_error, validation_error, nr_of_epochs  = RNN_training(train,validation,nr_of_features,nr_of_outputs,model_choice,max_epochs,batch_size,seq_len,pred_len,learning_rate,nr_of_hidden_neurons,patience)
+                                    #TODO What do to with model?
+                                    df_metrics.loc[len(df_metrics)] = {
+                                        "model": model_choice,
+                                        "pred_len": pred_len,
+                                        "seq_len": seq_len,
+                                        "batch_size": batch_size,
+                                        "learning_rate": learning_rate,
+                                        "hidden": nr_of_hidden_neurons,
+                                        "nr_of_epochs": nr_of_epochs,
+                                        "training_error": training_error,     
+                                        "validation_error": validation_error 
+                                    }
+    return df_metrics
+
+
+def main():
 
     """Structure Data"""
     #TODO Normalize data ? 
@@ -182,35 +215,8 @@ def RNN_main_pipeline():
 
     X_train, Y_train, X_test, Y_test, nr_of_features, nr_of_outputs = data_handling(IMU,groundtruth)
 
-    #Store results in csv_file
-    header = ["model", "pred_len", "seq_len", "batch_size", "learning_rate", "nr_of_hidden_neurons", "epoch", "training_error", "validation_error"]
+    df_metrics = RNN_main_pipeline(X_train, Y_train, nr_of_features, nr_of_outputs)
 
-    """Set up training for various cases"""
-    for seq_len in seq_len_list:
-        for pred_len in pred_len_list:
-            X_windows, Y_windows = Create_sliding_windows(X_train,Y_train, seq_len, pred_len)
-            dataset = TensorDataset(X_windows, Y_windows) # dataset[i] = (X_windows[i], Y_windows[i])
-            data_size = len(dataset)
-            n_validation = int(val_ratio * data_size)
-            n_train = data_size-n_validation
+    #TODO: Write to csv file???
 
-            train, validation = random_split(dataset,[n_train,n_validation]) #TODO: Is it fine that they are different splits?
-
-            for model_choice in model_choice_list:
-                for epochs in epochs_list:
-                    for batch_size in batch_size_list:
-                        for learning_rate in learning_rate_list:
-                            for nr_of_hidden_neurons in nr_of_hidden_neurons_list:
-
-                                df_metrics = pd.DataFrame(columns=header)
-                
-                                RNN_training(train,validation,nr_of_features,nr_of_outputs,model_choice,epochs,batch_size,seq_len,pred_len,learning_rate,nr_of_hidden_neurons,df_metrics)
-                                
-                                filename = (
-                                    f"{seq_len}seqlen_{pred_len}predlen_"
-                                    f"{model_choice}_{epochs}epochs_"
-                                    f"{batch_size}batchsize_{learning_rate}learning_rate_"
-                                    f"{nr_of_hidden_neurons}_hiddenneurons.csv"
-                                )
-
-                                df_metrics.to_csv(filename, index=False)
+main()

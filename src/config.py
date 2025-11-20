@@ -1,8 +1,9 @@
 
 """Training config"""
-epochs_list = [100]
+max_epochs = 1000
 test_ratio = 0.2
 val_ratio = 0.2
+patience = 10
 
 """RNN config"""
 batch_size_list =  [100]

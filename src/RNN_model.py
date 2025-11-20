@@ -5,19 +5,6 @@ import torch.nn as nn
 from torch.utils.data import TensorDataset, DataLoader
 from torch.utils.data import random_split
 import matplotlib.pyplot as plt
-"""
----------  Structure --------
-Want a many to many RNN. Each input corresponds to output at every timestep
-"""
-
-"""
----------- Clarification ----------
-
-seq_len: how many timesteps the model sees contiguously before producing a block of outputs (your memory horizon for training).
-batch: how many independent sequences you train on in parallel in one optimizer step. the batch just parallelizes many runs.
-
-
-"""
 
 #----- Regular RNN -----
 class RNN(nn.Module):
