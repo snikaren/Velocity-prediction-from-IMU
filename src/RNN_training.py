@@ -6,6 +6,7 @@ from torch.utils.data import TensorDataset, DataLoader
 from torch.utils.data import random_split
 import matplotlib.pyplot as plt
 import copy
+import optuna
 
 """From other files"""
 from RNN_model import RNN,GRURNN
@@ -162,47 +163,58 @@ def RNN_training(train,validation,nr_of_features,nr_of_outputs,model_choice,max_
     return model, training_loss, validation_loss, nr_of_epochs
 
 
+
+
 def RNN_main_pipeline(X_train, Y_train, nr_of_features, nr_of_outputs):
-
-    """Structure Data"""
-    #TODO Normalize data ? 
-    IMU = pd.read_csv(r"C:\Users\hampu\Desktop\RNN_test\Velocity-prediction-from-IMU\Data\IMU_data\data.csv")
-    groundtruth = pd.read_csv(r"C:\Users\hampu\Desktop\RNN_test\Velocity-prediction-from-IMU\Data\state_groundtruth_data\data.csv")
-
 
     #Store results in csv_file
     header = ["model", "pred_len", "seq_len", "batch_size", "learning_rate", "hidden", "nr_of_epochs", "training_error", "validation_error"]
     df_metrics = pd.DataFrame(columns=header)
 
     """Set up training"""
-    for model_choice in model_choice_list:
-            for batch_size in batch_size_list:
-                    for learning_rate in learning_rate_list:
-                        for nr_of_hidden_neurons in nr_of_hidden_neurons_list:
-                            for seq_len in seq_len_list:
-                                for pred_len in pred_len_list:
-                                    
-                                    X_windows, Y_windows = Create_sliding_windows(X_train,Y_train, seq_len, pred_len)
-                                    dataset = TensorDataset(X_windows, Y_windows) # dataset[i] = (X_windows[i], Y_windows[i])
-                                    data_size = len(dataset)
-                                    n_validation = int(val_ratio * data_size)
-                                    n_train = data_size-n_validation
-                                    train, validation = random_split(dataset,[n_train,n_validation]) #TODO: Is it fine that they are different splits?
+    #TODO: Create some kind of gridsearch of hyperparams
 
-                                    #Train model and log data
-                                    model, training_error, validation_error, nr_of_epochs  = RNN_training(train,validation,nr_of_features,nr_of_outputs,model_choice,max_epochs,batch_size,seq_len,pred_len,learning_rate,nr_of_hidden_neurons,patience)
-                                    #TODO What do to with model?
-                                    df_metrics.loc[len(df_metrics)] = {
-                                        "model": model_choice,
-                                        "pred_len": pred_len,
-                                        "seq_len": seq_len,
-                                        "batch_size": batch_size,
-                                        "learning_rate": learning_rate,
-                                        "hidden": nr_of_hidden_neurons,
-                                        "nr_of_epochs": nr_of_epochs,
-                                        "training_error": training_error,     
-                                        "validation_error": validation_error 
-                                    }
+    for seq_len in seq_len_list:
+         for pred_len in pred_len_list:
+
+            X_windows, Y_windows = Create_sliding_windows(X_train,Y_train, seq_len, pred_len)
+            dataset = TensorDataset(X_windows, Y_windows) # dataset[i] = (X_windows[i], Y_windows[i])
+            data_size = len(dataset)
+            n_validation = int(val_ratio * data_size)
+            n_train = data_size-n_validation
+            train, validation = random_split(dataset,[n_train,n_validation]) #TODO: Is it fine that they are different splits?
+            
+            #Optuna tuning
+            def objective(trial):
+                # ---- Sample hyperparams ----
+                model_choice = trial.suggest_categorical("model_choice", model_choice_list)
+                batch_size   = trial.suggest_categorical("batch_size", batch_size_list)
+                learning_rate = trial.suggest_categorical("learning_rate", learning_rate_list)
+                hidden_size  = trial.suggest_categorical("hidden", nr_of_hidden_neurons_list)
+
+                # ---- Train model ----
+                model, training_error, validation_error, nr_of_epochs  = RNN_training(train,validation,nr_of_features,nr_of_outputs,model_choice,max_epochs,batch_size,seq_len,pred_len,learning_rate,hidden_size,patience)
+                
+                row = {
+                    "model": model_choice,
+                    "pred_len": pred_len,
+                    "seq_len": seq_len,
+                    "batch_size": batch_size,
+                    "learning_rate": learning_rate,
+                    "hidden": hidden_size,
+                    "nr_of_epochs": nr_of_epochs,
+                    "training_error": training_error,
+                    "validation_error": validation_error,
+                }
+                trial.set_user_attr("row", row)
+                
+                return min(validation_error)
+
+            study = optuna.create_study(direction="minimize")
+            study.optimize(objective, n_trials=10)
+            best_row = study.best_trial.user_attrs["row"]
+            df_metrics.loc[len(df_metrics)] = best_row
+
     return df_metrics
 
 
@@ -210,12 +222,18 @@ def main():
 
     """Structure Data"""
     #TODO Normalize data ? 
-    IMU = pd.read_csv(r"C:\Users\hampu\Desktop\RNN_test\Velocity-prediction-from-IMU\Data\IMU_data\data.csv")
-    groundtruth = pd.read_csv(r"C:\Users\hampu\Desktop\RNN_test\Velocity-prediction-from-IMU\Data\state_groundtruth_data\data.csv")
+    #IMU = pd.read_csv(r"C:\Users\hampu\Desktop\RNN_test\Velocity-prediction-from-IMU\Data\IMU_data\data.csv")
+    #groundtruth = pd.read_csv(r"C:\Users\hampu\Desktop\RNN_test\Velocity-prediction-from-IMU\Data\state_groundtruth_data\data.csv")
+
+    IMU = pd.read_csv("Velocity-prediction-from-IMU/Data/IMU_data/data.csv")
+    groundtruth = pd.read_csv("Velocity-prediction-from-IMU/Data/state_groundtruth_data/data.csv")
 
     X_train, Y_train, X_test, Y_test, nr_of_features, nr_of_outputs = data_handling(IMU,groundtruth)
 
     df_metrics = RNN_main_pipeline(X_train, Y_train, nr_of_features, nr_of_outputs)
+    
+    output_path = r"Velocity-prediction-from-IMU\Results\metrics.csv"
+    df_metrics.to_csv(output_path, index=False)
 
     #TODO: Write to csv file???
 
