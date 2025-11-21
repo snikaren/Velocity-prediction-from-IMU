@@ -39,6 +39,13 @@ def data_handling(IMU,groundtruth):
     X_np_train = train_IMU.to_numpy()
     X_np_test = test_IMU.to_numpy()
 
+    #----Normalize----
+    #X_mean = X_np_train.mean(axis=0, keepdims=True) 
+    #X_std  = X_np_train.std(axis=0, keepdims=True)
+
+    #X_np_train_norm = (X_np_train - X_mean) / X_std
+    #X_np_test_norm  = (X_np_test  - X_mean) / X_std
+
     X_train = torch.from_numpy(X_np_train).float() 
     X_test = torch.from_numpy(X_np_test).float()
 
@@ -48,8 +55,15 @@ def data_handling(IMU,groundtruth):
     Y_np_train = groundtruth_x_vel_train.to_numpy()
     Y_np_test = groundtruth_x_vel_test.to_numpy()
 
-    Y_train = torch.from_numpy(Y_np_train).float()
-    Y_test = torch.from_numpy(Y_np_test).float()
+    #----Normalize Output----
+    Y_mean = Y_np_train.mean(axis=0, keepdims=True) 
+    Y_std  = Y_np_train.std(axis=0, keepdims=True)
+
+    X_np_train_norm = (Y_np_train - Y_mean) / Y_std
+    X_np_test_norm  = (Y_np_test  - Y_mean) / Y_std
+
+    Y_train = torch.from_numpy(X_np_train_norm).float()
+    Y_test = torch.from_numpy(X_np_test_norm).float()
 
     nr_of_features = X_train.shape[1]
     nr_of_outputs = Y_train.shape[1]
