@@ -167,13 +167,14 @@ def RNN_training(train,validation,nr_of_features,nr_of_outputs,model_choice,max_
 
 def RNN_main_pipeline(X_train, Y_train, nr_of_features, nr_of_outputs):
 
-    #Store results in csv_file
-    header = ["model", "pred_len", "seq_len", "batch_size", "learning_rate", "hidden", "nr_of_epochs", "training_error", "validation_error"]
+    #Store results in df
+    header = ["model", "pred_len", "seq_len", "batch_size", "learning_rate", "hidden", "nr_of_epochs", "training_error", "validation_error", "model_path"]
     df_metrics = pd.DataFrame(columns=header)
 
-    """Set up training"""
-    #TODO: Create some kind of gridsearch of hyperparams
+    # Store best model per (seq_len, pred_len)
+    best_models = {}
 
+    """Set up training"""
     for seq_len in seq_len_list:
          for pred_len in pred_len_list:
 
@@ -184,7 +185,7 @@ def RNN_main_pipeline(X_train, Y_train, nr_of_features, nr_of_outputs):
             n_train = data_size-n_validation
             train, validation = random_split(dataset,[n_train,n_validation]) #TODO: Is it fine that they are different splits?
             
-            #Optuna tuning
+            #Optuna tuning: find best hyperparams
             def objective(trial):
                 # ---- Sample hyperparams ----
                 model_choice = trial.suggest_categorical("model_choice", model_choice_list)
@@ -205,17 +206,36 @@ def RNN_main_pipeline(X_train, Y_train, nr_of_features, nr_of_outputs):
                     "nr_of_epochs": nr_of_epochs,
                     "training_error": training_error,
                     "validation_error": validation_error,
+                    
                 }
-                trial.set_user_attr("row", row)
-                
+                #Access important info
+                trial.set_user_attr('row', row)
+                trial.set_user_attr('state_dict', copy.deepcopy(model.state_dict()))
+
                 return min(validation_error)
 
             study = optuna.create_study(direction="minimize")
-            study.optimize(objective, n_trials=10)
-            best_row = study.best_trial.user_attrs["row"]
+            study.optimize(objective, n_trials = optuna_hyperparam_trails)
+
+            #Retrieve info from best hyperparameter tuning
+            best_trial = study.best_trial
+            best_row = best_trial.user_attrs['row']
+            best_state_dict = best_trial.user_attrs['state_dict']
+
             df_metrics.loc[len(df_metrics)] = best_row
 
-    return df_metrics
+            #--------Store best model---------
+            best_model = GRURNN(
+                input_size = nr_of_features,
+                hidden_size = int(best_row['hidden']),
+                output_size = nr_of_outputs,
+            )
+            best_model.load_state_dict(best_state_dict)
+            best_model.eval()  
+
+            best_models[(seq_len,pred_len)] = best_model
+
+    return df_metrics, best_models
 
 
 def main():
@@ -230,11 +250,15 @@ def main():
 
     X_train, Y_train, X_test, Y_test, nr_of_features, nr_of_outputs = data_handling(IMU,groundtruth)
 
-    df_metrics = RNN_main_pipeline(X_train, Y_train, nr_of_features, nr_of_outputs)
+    df_metrics, best_models = RNN_main_pipeline(X_train, Y_train, nr_of_features, nr_of_outputs)
     
+    # Save metrics
     output_path = r"Velocity-prediction-from-IMU\Results\metrics.csv"
     df_metrics.to_csv(output_path, index=False)
 
-    #TODO: Write to csv file???
+    #Save model
+    #model_save_path = f"Velocity-prediction-from-IMU/Results/model_seq{chosen_seq}_pred{chosen_pred}.pt"
+
+
 
 main()
